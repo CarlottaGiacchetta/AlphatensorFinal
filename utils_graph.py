@@ -4,8 +4,67 @@ import matplotlib.pyplot as plt
 from torch_geometric.utils import to_networkx, from_networkx
 import torch
 from torch_geometric.data import Batch
+from torch_geometric.data import Data, Batch
+import torch
+
+# ---------------------------------------------------------------------
+# 1. 100 % torch – converte UN tensore (T,S,S,S) in Data
+# ---------------------------------------------------------------------
+def tensor_to_graph_fast(tensor: torch.Tensor) -> Data:
+    """
+    Versione vectorized di tensor_to_graph.
+    - Nessuna dipendenza da NetworkX
+    - Tutto su GPU se `tensor` è già su GPU
+    """
+    device = tensor.device
+    if tensor.dim() == 3:            # (S,S,S)  →  (1,S,S,S)
+        tensor = tensor.unsqueeze(0)
+
+    T, S = tensor.size(0), tensor.size(1)
+
+    # --------------------- nodi presenti ------------------------------
+    mask = tensor.any(dim=0)                             # (S,S,S) bool
+    coords = mask.nonzero(as_tuple=False)                # (N,3) long
+    if coords.numel() == 0:                              # cubo vuoto?
+        coords = torch.zeros((1, 3), dtype=torch.long, device=device)
+
+    N = coords.size(0)
+    i, j, k = coords.t().float()                         # (N,)
+
+    # --------------------- feature nodi -------------------------------
+    values = tensor[:, coords[:, 0], coords[:, 1], coords[:, 2]].T  # (N,T)
+    x = torch.cat([i[:, None], j[:, None], k[:, None], values], dim=1)  # (N, 3+T)
+
+    # --------------------- archi --------------------------------------
+    # due nodi collegati se condividono ≥1 coordinata
+    diff = coords.unsqueeze(1) - coords.unsqueeze(0)     # (N,N,3)
+    num_matches = (diff == 0).sum(-1)                    # (N,N)
+    mask_edges = (num_matches > 0) & ~torch.eye(N, dtype=torch.bool, device=device)
+
+    edge_index = mask_edges.nonzero(as_tuple=False).t()  # (2,E)
+
+    k_eq = (coords[:, 2].unsqueeze(1) == coords[:, 2].unsqueeze(0))
+    edge_weight = torch.where(k_eq & mask_edges, 1.0, 0.5)
+    edge_attr = edge_weight[mask_edges].unsqueeze(1)     # (E,1)
+
+    return Data(x=x, edge_index=edge_index, edge_attr=edge_attr)
 
 
+# ---------------------------------------------------------------------
+# 2. Batch di tensori  →  Batch di Data
+# ---------------------------------------------------------------------
+def tensor_batch_to_graphs(tensor_batch: torch.Tensor, line_graph: bool = False) -> Batch:
+    """
+    Converte un batch di tensori  (B,T,S,S,S)  in  torch_geometric Batch.
+    Usa la versione fast; `line_graph` è mantenuto per compatibilità,
+    ma se ti serve davvero il line-graph dovrai implementarlo anch’esso in torch.
+    """
+    graphs = [tensor_to_graph_fast(t) for t in tensor_batch]
+    return Batch.from_data_list(graphs)
+
+
+## OLD VERSION ##
+'''
 def tensor_to_graph(tensor):
 
     device = tensor.device
@@ -92,6 +151,8 @@ def tensor_to_graph(tensor):
 
 
 
+
+
 def tensor_batch_to_graphs(tensor_batch, line_graph):
     graphs = []
     batch_size = tensor_batch.shape[0]  # Numero di tensori nel batch
@@ -104,7 +165,7 @@ def tensor_batch_to_graphs(tensor_batch, line_graph):
         graphs.append(graph)
 
     # Crea un batch di grafi
-    return Batch.from_data_list(graphs)
+    return Batch.from_data_list(graphs)'''
 
 
 def graph_to_line_graph(data):

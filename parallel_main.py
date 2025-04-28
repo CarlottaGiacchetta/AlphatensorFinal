@@ -34,6 +34,7 @@ def run(test=False):
 
     game  = TensorGame(args)
     model = TensorModel(dim_3d=4, dim_t=8, dim_s=1, dim_c=16, n_steps=12, n_logits=3, n_samples=4, device=args["device"]).to(args["device"])
+    model = torch.compile(model, mode="reduce-overhead")  
 
     # se esiste, carica checkpoint e salta pretrain
     ckpt = args.get("pretrained_path", "")
