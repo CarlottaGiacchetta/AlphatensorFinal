@@ -1,11 +1,13 @@
 import torch
 import networkx as nx
 import matplotlib.pyplot as plt
-from torch_geometric.utils import to_networkx, from_networkx
+from torch_geometric.utils import to_networkx
 import torch
 from torch_geometric.data import Batch
 from torch_geometric.data import Data, Batch
 import torch
+from torch_scatter import scatter_add
+from torch_geometric.data import Data
 
 # ---------------------------------------------------------------------
 # 1. 100 % torch – converte UN tensore (T,S,S,S) in Data
@@ -53,14 +55,89 @@ def tensor_to_graph_fast(tensor: torch.Tensor) -> Data:
 # ---------------------------------------------------------------------
 # 2. Batch di tensori  →  Batch di Data
 # ---------------------------------------------------------------------
-def tensor_batch_to_graphs(tensor_batch: torch.Tensor, line_graph: bool = False) -> Batch:
+def tensor_batch_to_graphs(tensor_batch: torch.Tensor,
+                           use_line_graph: bool = False) -> Batch:
     """
     Converte un batch di tensori  (B,T,S,S,S)  in  torch_geometric Batch.
     Usa la versione fast; `line_graph` è mantenuto per compatibilità,
     ma se ti serve davvero il line-graph dovrai implementarlo anch’esso in torch.
     """
     graphs = [tensor_to_graph_fast(t) for t in tensor_batch]
+    if use_line_graph:
+        graphs = [graph_to_line_graph_fast(g) for g in graphs]
     return Batch.from_data_list(graphs)
+
+
+
+
+import torch
+from torch_geometric.data import Data
+
+@torch.no_grad()
+def graph_to_line_graph_fast(data: Data) -> Data:
+    """
+    Versione super-ottimizzata solo-Tensor di graph_to_line_graph.
+    Trasforma un grafo in line-graph senza cicli Python.
+    Tutto su GPU.
+    """
+    device = data.edge_index.device
+    src, dst = data.edge_index  # (2, E)
+    x = data.x
+    E = src.size(0)
+    d = x.size(1)
+
+    # -------------------------------
+    # Nuove feature dei nodi: somma (x_src + x_dst)
+    # -------------------------------
+    x_line = x[src] + x[dst]  # (E, d)
+
+    # -------------------------------
+    # Costruzione degli archi del line-graph
+    # -------------------------------
+
+    # Per ogni nodo originale: elenco archi incidenti
+    # Assumiamo che nodi vadano da 0 a N-1 senza buchi
+    N = x.size(0)
+
+    edge_ids = torch.arange(E, device=device)  # (E,)
+    # Per ogni nodo, diciamo quali archi tocca
+    node_to_edge = [[] for _ in range(N)]
+    for eid, (u, v) in enumerate(zip(src.tolist(), dst.tolist())):
+        node_to_edge[u].append(eid)
+        node_to_edge[v].append(eid)
+
+    # Ora costruiamo tutte le coppie di archi che condividono un nodo
+    edge_pairs = []
+    for edges in node_to_edge:
+        if len(edges) >= 2:
+            edges = torch.tensor(edges, device=device)
+            a, b = torch.combinations(edges, r=2).unbind(1)
+            edge_pairs.append(torch.stack([a, b], dim=0))
+            edge_pairs.append(torch.stack([b, a], dim=0))  # entrambi i versi
+
+    if len(edge_pairs) > 0:
+        edge_index_L = torch.cat(edge_pairs, dim=1)  # (2, E_L)
+    else:
+        edge_index_L = torch.empty((2, 0), dtype=torch.long, device=device)
+
+    # -------------------------------
+    # Feature degli archi del line-graph
+    # -------------------------------
+    if edge_index_L.numel() == 0:
+        edge_attr = torch.empty((0, d), device=device)
+    else:
+        e1, e2 = edge_index_L
+        a1, b1 = src[e1], dst[e1]
+        a2, b2 = src[e2], dst[e2]
+        edge_attr = (x[a1] + x[b1] + x[a2] + x[b2]) / 4.0
+
+    return Data(
+        x=x_line,
+        edge_index=edge_index_L,
+        edge_attr=edge_attr
+    )
+
+
 
 
 ## OLD VERSION ##
@@ -165,7 +242,7 @@ def tensor_batch_to_graphs(tensor_batch, line_graph):
         graphs.append(graph)
 
     # Crea un batch di grafi
-    return Batch.from_data_list(graphs)'''
+    return Batch.from_data_list(graphs)
 
 
 def graph_to_line_graph(data):
@@ -250,6 +327,8 @@ def graph_to_line_graph(data):
 
     line_graph = line_graph.to(data.edge_index.device)
     return line_graph
+'''
+
 
 def visualize_graph_2d(graph_data):
     """Visualizza un grafo con le feature dei nodi e i pesi degli archi stampati accanto agli archi."""

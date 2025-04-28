@@ -2,7 +2,7 @@ import torch
 import torch.nn.functional as F
 from torch_geometric.nn import GCNConv, global_mean_pool
 
-from utils_graph import tensor_batch_to_graphs, graph_to_line_graph, visualize_graph_2d
+from utils_graph import tensor_batch_to_graphs, visualize_graph_2d
 
 
 class TorsoGCNv1(torch.nn.Module):
@@ -22,7 +22,6 @@ class TorsoGCNv1(torch.nn.Module):
 
     def forward(self, data, ss=None):
         data = tensor_batch_to_graphs(data, False)
-        #visualize_graph_2d(data)
 
         x, edge_index, batch = data.x, data.edge_index, data.batch
 
@@ -103,15 +102,23 @@ class TorsoGCNv3(torch.nn.Module):
         self.conv3 = GCNConv(hidden_dim // 2, hidden_dim // 4)
 
         self.lin = torch.nn.Linear(hidden_dim // 4, self.output_dim)
+        print(input_dim, hidden_dim // 4, self.output_dim)
 
     def forward(self, data, ss=None):
         data = tensor_batch_to_graphs(data, True)
+
         x, edge_index, batch = data.x, data.edge_index, data.batch
 
         x = self.conv1(x, edge_index)
+        data.x = x  # aggiorna le feature nel grafo
+        data.edge_index = edge_index
+        #visualize_graph_2d(data, False)
         x = F.relu(x)
 
         x = self.conv2(x, edge_index)
+        x = F.relu(x)
+
+        x = self.conv3(x, edge_index)
         x = F.relu(x)
 
         x = global_mean_pool(x, batch)  
