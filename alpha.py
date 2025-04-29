@@ -21,7 +21,7 @@ class AlphaZero:
         self.args = args
         self.mcts = MCTS(game, args, model)
         self.use_amp = args.get("use_amp", False) and args["device"].startswith("cuda")
-        self.scaler = amp.GradScaler(device_type='cuda', enabled=self.use_amp)   # <-- NUOVO per fare ottimizzazione
+        self.scaler = amp.GradScaler(device ='cuda', enabled=self.use_amp)   # <-- NUOVO per fare ottimizzazione
         if self.use_amp:
            torch.set_float32_matmul_precision("medium")
 
