@@ -1,7 +1,6 @@
 #!/bin/bash
 
-#SBATCH -p edu-thesis                 # Nome della coda (edu-20h)
-#SBATCH --account=giovanni.iacca.tesi
+#SBATCH -p long                 # Nome della coda (edu-20h)
 #SBATCH --gres=gpu:1              # Richiedi 1 GPU generica   gpu:a30.24:1
 #SBATCH --ntasks=1                 # Numero di task
 #SBATCH --cpus-per-task=4          # Numero di CPU per task
@@ -14,9 +13,9 @@
 # Caricare CUDA (se necessario per l'uso con PyTorch o TensorFlow)
 module load CUDA/12.5.0
 # Attivare un ambiente virtuale (se presente)
-source /home/marcus.vukojevic/.bashrc
-conda activate ambiente
+source /home/carlotta.giacchetta/.bashrc
+conda activate py11
 
 # Eseguire lo script Python
-python ~/alphatensor/parallel_main.py
+python ~/AlphatensorFinal/parallel_main.py
 
