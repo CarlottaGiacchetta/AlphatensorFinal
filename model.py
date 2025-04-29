@@ -581,9 +581,9 @@ class TensorModel(nn.Module):
         #self.torso = Torso(dim_3d, dim_t, dim_s, dim_c, **kwargs)
         #self.torso = GNNTorso(dim_3d, dim_t, dim_s, dim_c, **kwargs)
         #self.torso = HybridGnnTorso(S=4, T=8, dim_c=dim_c)
-        #self.torso = TorsoGCNv1(dim_t+3, dim_t, dim_s, dim_c, **kwargs)
+        self.torso = TorsoGCNv1(dim_t+3, dim_t, dim_s, dim_c, **kwargs)
         #self.torso = TorsoGCNv2(dim_t+3, dim_t, dim_s, dim_c, **kwargs)
-        self.torso = TorsoGCNv3(dim_t+3, dim_t, dim_s, dim_c, **kwargs)
+        #self.torso = TorsoGCNv3(dim_t+3, dim_t, dim_s, dim_c, **kwargs)
         self.policy_head = PolicyHead(
             n_steps, n_logits, n_samples, dim_c, device=device, **kwargs
         )
