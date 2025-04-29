@@ -155,7 +155,7 @@ class AlphaZero:
                     tok.to(self.model.device),
                     rew.to(self.model.device),
                 )
-                with amp.autocast(enabled=self.use_amp):
+                with amp.autocast(device_type = "cuda", enabled=self.use_amp):
                     pol_loss, val_loss = self.model.fwd_train(st, sc, tok, rew)
                     loss = pol_loss + val_loss
                 self.optimizer.zero_grad(set_to_none=True)
