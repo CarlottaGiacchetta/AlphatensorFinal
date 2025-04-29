@@ -8,6 +8,7 @@ from tqdm import trange, tqdm
 import os
 from torch.utils.data import Dataset, ConcatDataset, DataLoader
 import matplotlib.pyplot as plt
+from torch.cuda.amp import GradScaler, autocast
 
 class AlphaZero:
 
@@ -17,6 +18,10 @@ class AlphaZero:
         self.game = game
         self.args = args
         self.mcts = MCTS(game, args, model)
+        self.use_amp = args.get("use_amp", False) and args["device"].startswith("cuda")
+        self.scaler  = GradScaler(enabled=self.use_amp)   # <-- NUOVO per fare ottimizzazione
+        if self.use_amp:
+           torch.set_float32_matmul_precision("medium")
 
 
     def selfPlay(self):
@@ -59,8 +64,21 @@ class AlphaZero:
             ss = torch.stack(scalars).to(self.model.device).float()  # (B, 1)
             gg = torch.stack(actions).to(self.model.device).long()   # (B, n_steps)
             vv = torch.tensor(values,dtype=torch.float32, device=self.model.device).view(-1,1) # (B) → (B,1)
-                                
 
+            # ──────────────────────────────────────────────────────
+            # Forward & Loss (mixed precision)
+            # ──────────────────────────────────────────────────────
+            with autocast(enabled=self.use_amp):
+                pol_loss, val_loss = self.model.fwd_train(xx, ss, gg, vv)
+                loss = pol_loss + val_loss
+
+            # Back‑prop + Opt step
+            self.optimizer.zero_grad(set_to_none=True)
+            self.scaler.scale(loss).backward()
+            self.scaler.step(self.optimizer)
+            self.scaler.update()                 
+
+            '''OLD VERSIONE -> NOT OPTMIZED
             # 2) forward + compute losses
             pol_loss, val_loss = self.model.fwd_train(xx, ss, gg, vv)
             loss = pol_loss + val_loss
@@ -68,7 +86,7 @@ class AlphaZero:
             # 3) backprop
             self.optimizer.zero_grad()
             loss.backward()
-            self.optimizer.step()
+            self.optimizer.step()'''
 
     def _save_pt_and_plot(self, losses: list[float], tag: str):
         """
@@ -135,11 +153,19 @@ class AlphaZero:
                     tok.to(self.model.device),
                     rew.to(self.model.device),
                 )
+                with autocast(enabled=self.use_amp):
+                    pol_loss, val_loss = self.model.fwd_train(st, sc, tok, rew)
+                    loss = pol_loss + val_loss
+                self.optimizer.zero_grad(set_to_none=True)
+                self.scaler.scale(loss).backward()
+                self.scaler.step(self.optimizer)
+                self.scaler.update()
+                '''OLD VERISON
                 pol_loss, val_loss = self.model.fwd_train(st, sc, tok, rew)
                 loss = pol_loss + val_loss
                 self.optimizer.zero_grad()
                 loss.backward()
-                self.optimizer.step()
+                self.optimizer.step()'''
                 epoch_loss += loss.item()
             print(f"loss medio = {epoch_loss/len(loader):.4f}")
             batch_losses.append(epoch_loss/len(loader))

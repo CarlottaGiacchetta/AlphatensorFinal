@@ -22,6 +22,7 @@ def run(test=False):
         "batch_size":             128 if test else 512,
         "models_path":            "models",
         "device":                 "cuda" if test else "cuda",
+        "use_amp":                True, #per ottimizzare
         "T": 0,
         "R_limit": 8,
         "pretrained_path":        "",

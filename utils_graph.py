@@ -70,73 +70,62 @@ def tensor_batch_to_graphs(tensor_batch: torch.Tensor,
 
 
 
-import torch
-from torch_geometric.data import Data
+###############################################################################
+# 1. Line‑graph ultra‑veloce (tutto tensor, 0 cicli Python in hot‑path)
+###############################################################################
 
-@torch.no_grad()
 def graph_to_line_graph_fast(data: Data) -> Data:
-    """
-    Versione super-ottimizzata solo-Tensor di graph_to_line_graph.
-    Trasforma un grafo in line-graph senza cicli Python.
-    Tutto su GPU.
-    """
-    device = data.edge_index.device
-    src, dst = data.edge_index  # (2, E)
-    x = data.x
+    """Crea il line-graph su GPU senza cicli Python.
+    L'idea è usare la matrice d'incidenza sparsa    
+        inc  ∈ {0,1}^{N×E}
+    e calcolare  L = inc^T ⋅ inc  (E×E),  che conta
+    quante estremità due archi condividono. Lij>0 ⇒ archi adiacenti.
+
+    Complessità:  O(E + |L|)  (tutto in C++/CUDA sparse)."""
+    device = data.x.device
+    src, dst = data.edge_index            # (2, E)
     E = src.size(0)
-    d = x.size(1)
+    d = data.x.size(1)
+    N = int(torch.max(torch.stack([src, dst])) + 1)
 
-    # -------------------------------
-    # Nuove feature dei nodi: somma (x_src + x_dst)
-    # -------------------------------
-    x_line = x[src] + x[dst]  # (E, d)
+    # ------------------------------------------------------------------
+    # 1. Feature dei nodi del line‑graph
+    #    x_line[e] = x[src[e]] + x[dst[e]]
+    # ------------------------------------------------------------------
+    x_line = data.x[src] + data.x[dst]    # (E, d)
 
-    # -------------------------------
-    # Costruzione degli archi del line-graph
-    # -------------------------------
+    # ------------------------------------------------------------------
+    # 2. Matrice d'incidenza sparsa  inc  (N×E)
+    # ------------------------------------------------------------------
+    row = torch.cat([src, dst], dim=0)               # (2E,)
+    col = torch.arange(E, device=device).repeat(2)   # (2E,)
+    val = torch.ones(2 * E, device=device)
+    inc = torch.sparse_coo_tensor(
+        torch.stack([row, col]), val, (N, E), device=device)
 
-    # Per ogni nodo originale: elenco archi incidenti
-    # Assumiamo che nodi vadano da 0 a N-1 senza buchi
-    N = x.size(0)
+    # ------------------------------------------------------------------
+    # 3. Adiacenza del line‑graph   L = incᵀ ⋅ inc   (E×E  sparsa)
+    # ------------------------------------------------------------------
+    L = torch.sparse.mm(inc.transpose(0, 1), inc).coalesce()
+    idx_i, idx_j = L.indices()                       # (2, |L|)
+    mask = idx_i != idx_j                            # rimuovi diagonale
+    edge_index_L = torch.stack([
+        idx_i[mask], idx_j[mask]
+    ], dim=0)                                        # (2, E_L)
 
-    edge_ids = torch.arange(E, device=device)  # (E,)
-    # Per ogni nodo, diciamo quali archi tocca
-    node_to_edge = [[] for _ in range(N)]
-    for eid, (u, v) in enumerate(zip(src.tolist(), dst.tolist())):
-        node_to_edge[u].append(eid)
-        node_to_edge[v].append(eid)
-
-    # Ora costruiamo tutte le coppie di archi che condividono un nodo
-    edge_pairs = []
-    for edges in node_to_edge:
-        if len(edges) >= 2:
-            edges = torch.tensor(edges, device=device)
-            a, b = torch.combinations(edges, r=2).unbind(1)
-            edge_pairs.append(torch.stack([a, b], dim=0))
-            edge_pairs.append(torch.stack([b, a], dim=0))  # entrambi i versi
-
-    if len(edge_pairs) > 0:
-        edge_index_L = torch.cat(edge_pairs, dim=1)  # (2, E_L)
-    else:
-        edge_index_L = torch.empty((2, 0), dtype=torch.long, device=device)
-
-    # -------------------------------
-    # Feature degli archi del line-graph
-    # -------------------------------
+    # ------------------------------------------------------------------
+    # 4. Feature degli archi del line‑graph
+    #    media delle 4 estremità (come nel codice originale)
+    # ------------------------------------------------------------------
     if edge_index_L.numel() == 0:
         edge_attr = torch.empty((0, d), device=device)
     else:
         e1, e2 = edge_index_L
         a1, b1 = src[e1], dst[e1]
         a2, b2 = src[e2], dst[e2]
-        edge_attr = (x[a1] + x[b1] + x[a2] + x[b2]) / 4.0
+        edge_attr = (data.x[a1] + data.x[b1] + data.x[a2] + data.x[b2]) * 0.25
 
-    return Data(
-        x=x_line,
-        edge_index=edge_index_L,
-        edge_attr=edge_attr
-    )
-
+    return Data(x=x_line, edge_index=edge_index_L, edge_attr=edge_attr)
 
 
 
