@@ -1,0 +1,1 @@
+slurmstepd: error: *** JOB 3937 ON gpu02 CANCELLED AT 2025-04-29T10:49:37 ***

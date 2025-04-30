@@ -1,0 +1,4 @@
+  File "/home/carlotta.giacchetta/AlphatensorFinal/parallel_main.py", line 22
+    "batch_size":             128 if test else 4096
+                                               ^^^^
+SyntaxError: invalid syntax. Perhaps you forgot a comma?
