@@ -10,7 +10,7 @@ from torch import nn
 from torch_geometric.data import Data, Batch
 from torch_geometric.nn  import SAGEConv 
 
-from class_gnn import TorsoGCNv1, TorsoGCNv2, TorsoGCNv3, TorsoGATv1, HybridGnnTorsoLine
+from class_gnn import TorsoGCNv1, TorsoGCNv2, TorsoGCNv3, TorsoGATv1, HybridGnnTorsoLine, HybridGnnTorsoATT
 from utils_graph import tensor_to_graph_fast
 
 # ---------------------------------------------------------------------
@@ -729,7 +729,8 @@ class TensorModel(nn.Module):
         #self.torso = TorsoGCNv2(dim_t+3, dim_t, dim_s, dim_c, **kwargs)
         #self.torso = TorsoGCNv3(dim_t+3, dim_t, dim_s, dim_c, **kwargs)
         #self.torso = TorsoGATv1(dim_t+3, dim_t, dim_s, dim_c, **kwargs)
-        self.torso = HybridGnnTorsoLine(S=4, T=8, dim_c=dim_c)
+        #self.torso = HybridGnnTorsoLine(S=4, T=8, dim_c=dim_c)
+        self.torso = HybridGnnTorsoATT(S=4, T=8, dim_c=dim_c)
         
         self.policy_head = PolicyHead(
             n_steps, n_logits, n_samples, dim_c, device=device, **kwargs
