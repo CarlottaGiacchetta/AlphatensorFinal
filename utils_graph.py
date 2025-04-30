@@ -63,7 +63,6 @@ def tensor_batch_to_graphs(tensor_batch: torch.Tensor,
     ma se ti serve davvero il line-graph dovrai implementarlo anch’esso in torch.
     """
     graphs = [tensor_to_graph_fast(t) for t in tensor_batch]
-    print(graphs)
     if use_line_graph:
         graphs = [graph_to_line_graph_fast(g) for g in graphs]
     return Batch.from_data_list(graphs)
@@ -454,3 +453,39 @@ def visualize_graph_2d(graph_data):
     plt.title("Visualizzazione 2D del Grafo con Feature dei Nodi e Pesi degli Archi")
     plt.show()
 
+
+
+import matplotlib.pyplot as plt
+import networkx as nx
+from torch_geometric.utils import to_networkx
+
+def visualize_hybrid_graph(data):
+    """
+    Visualizza un grafo costruito con tensor_to_graph_hybrid,
+    mostrando i nodi con feature [i/S, j/S, k/S, val/2, moves/S]
+    e le connessioni per coordinate condivise.
+    """
+    G = to_networkx(data, to_undirected=True)
+
+    # Layout fisso per nodi: usa le coordinate (i/S, j/S) per disposizione 2D
+    if hasattr(data, 'x'):
+        pos = {i: (data.x[i][0].item(), data.x[i][1].item()) for i in range(data.x.size(0))}
+    else:
+        pos = nx.spring_layout(G, seed=42)
+
+    plt.figure(figsize=(10, 8))
+    nx.draw(G, pos, with_labels=True, node_size=500, font_size=10, edge_color="gray")
+
+    # Etichette nodi: mostra tutte le feature
+    if hasattr(data, 'x'):
+        node_labels = {}
+        for i in range(data.x.size(0)):
+            features = data.x[i].tolist()
+            features_str = ", ".join([f"{f:.2f}" for f in features])
+            node_labels[i] = f"{i}\n({features_str})"
+        nx.draw_networkx_labels(G, pos, labels=node_labels, font_size=8, font_color="darkred")
+
+    # Nessun edge_attr, ma si possono etichettare se servisse
+    plt.title("Visualizzazione 2D del grafo Hybrid (feature + connettività)")
+    plt.axis("off")
+    plt.show()

@@ -2,7 +2,7 @@ import torch
 import torch.nn.functional as F
 from torch_geometric.nn import GCNConv, GATConv, global_mean_pool
 
-from utils_graph import tensor_batch_to_graphs, tensor_to_graph_hybrid, graph_to_line_graph_fast, visualize_graph_2d
+from utils_graph import tensor_batch_to_graphs, tensor_to_graph_hybrid, graph_to_line_graph_fast, visualize_hybrid_graph
 import torch
 import torch.nn.functional as F
 from torch import nn
@@ -243,8 +243,9 @@ class HybridGnnTorsoLine(nn.Module):
             tensor_to_graph_hybrid(xx[b,0], ss[b].item(), self.S)
             for b in range(B)
         ]
-
+        
         graphs = [graph_to_line_graph_fast(g) for g in graphs]
+        visualize_hybrid_graph(graphs[1])
         batch = Batch.from_data_list(graphs).to(dev)
         out   = self.gnn(batch)                  # batch.x shape: (sum N_b, C)
 
