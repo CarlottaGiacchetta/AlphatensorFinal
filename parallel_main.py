@@ -19,7 +19,7 @@ def run(test=False):
         "num_selfPlay_iterations":1 if test else 1000,
         "num_epochs":             1 if test else 10, # quante epoche nel traning selfplay-traning
         "num_epochs_pretrain":    1 if test else 100,
-        "batch_size":             128 if test else 2048,
+        "batch_size":             128 if test else 512,
         "models_path":            "models",
         "device":                 "cuda" if test else "cuda",
         "use_amp":                True, #per ottimizzare
