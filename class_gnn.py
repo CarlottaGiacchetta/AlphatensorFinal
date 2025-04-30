@@ -3,6 +3,12 @@ import torch.nn.functional as F
 from torch_geometric.nn import GCNConv, GATConv, global_mean_pool
 
 from utils_graph import tensor_batch_to_graphs, visualize_graph_2d
+import torch
+import torch.nn.functional as F
+from torch import nn
+from torch_geometric.nn import GCNConv, global_mean_pool
+from torch_geometric.data import Batch
+
 
 
 class TorsoGCNv1(torch.nn.Module):

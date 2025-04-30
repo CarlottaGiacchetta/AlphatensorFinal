@@ -12,7 +12,7 @@ from torch import nn
 from torch_geometric.data import Data, Batch
 from torch_geometric.nn  import SAGEConv 
 
-from class_gnn import TorsoGCNv1, TorsoGCNv2, TorsoGCNv3, TorsoGATv1
+from class_gnn import TorsoGCNv1, TorsoGCNv2, TorsoGCNv3, TorsoGATv1, TorsoGCNBetter
 
 # ---------------------------------------------------------------------
 def tensor_to_graph_fast(tensor: torch.Tensor, moves_left: float):
@@ -85,7 +85,9 @@ class DynamicGNN(nn.Module):
         )
         self.ln = nn.LayerNorm(out_dim)
 
-    def forward(self, batch):
+    def forward(self, batch: Data):
+        if not hasattr(batch, "edge_type"):
+            batch.edge_type = torch.zeros(batch.edge_index.size(1), dtype=torch.long, device=batch.edge_index.device)
         x = self.feat2c(batch.x)
         for conv in self.convs:
             x = self.ln(F.relu(conv(x, batch.edge_index, batch.edge_type)))
@@ -584,7 +586,8 @@ class TensorModel(nn.Module):
         #self.torso = TorsoGCNv1(dim_t+3, dim_t, dim_s, dim_c, **kwargs)
         #self.torso = TorsoGCNv2(dim_t+3, dim_t, dim_s, dim_c, **kwargs)
         #self.torso = TorsoGCNv3(dim_t+3, dim_t, dim_s, dim_c, **kwargs)
-        self.torso = TorsoGATv1(dim_t+3, dim_t, dim_s, dim_c, **kwargs)
+        #self.torso = TorsoGATv1(dim_t+3, dim_t, dim_s, dim_c, **kwargs)
+        
         self.policy_head = PolicyHead(
             n_steps, n_logits, n_samples, dim_c, device=device, **kwargs
         )
