@@ -63,10 +63,54 @@ def tensor_batch_to_graphs(tensor_batch: torch.Tensor,
     ma se ti serve davvero il line-graph dovrai implementarlo anch’esso in torch.
     """
     graphs = [tensor_to_graph_fast(t) for t in tensor_batch]
+    print(graphs)
     if use_line_graph:
         graphs = [graph_to_line_graph_fast(g) for g in graphs]
     return Batch.from_data_list(graphs)
 
+
+def tensor_to_graph_hybrid(t: torch.Tensor, moves_left: float, S: int = 4) -> Data:
+    """
+    Combina:
+    1. Input accettato: (T,S,S,S) o (S,S,S)
+    2. Scelta dei nodi: voxel attivi (any != 0 su T)
+    3. Node features: [i/S, j/S, k/S, val0/2, moves_left/S]
+    4. Archi: collegati se condividono ≥1 coordinata (sparse)
+    5. Output: PyG Data con x, edge_index, lin_idx (come _v2)
+    """
+    dev = t.device
+    if t.dim() == 3:
+        t = t.unsqueeze(0)  # (T,S,S,S)
+
+    T, S = t.size(0), t.size(1)
+
+    # nodi attivi
+    active = (t != 0).any(0)  # (S,S,S)
+    if not active.any():
+        coords = torch.zeros((1, 3), dtype=torch.long, device=dev)
+    else:
+        coords = active.nonzero(as_tuple=False)  # (N,3)
+
+    i, j, k = coords.t()  # ciascuno (N,)
+    N = coords.size(0)
+    lin_idx = (i * S + j) * S + k  # (N,)
+
+    # node features (come _v2)
+    coord = coords.float() / (S - 1)                  # (N,3)
+    val0 = t[0, i, j, k].float().unsqueeze(1) / 2.0   # (N,1)
+    mv   = torch.full((N,1), moves_left / S, device=dev)  # (N,1)
+    x = torch.cat((coord, val0, mv), dim=1)           # (N,5)
+
+    # edge construction (come fast): condividono ≥1 coord
+    if N == 1:
+        edge_index = torch.empty((2, 0), dtype=torch.long, device=dev)
+    else:
+        diff = coords.unsqueeze(1) - coords.unsqueeze(0)  # (N,N,3)
+        matches = (diff == 0).sum(-1)                     # (N,N)
+        mask = (matches > 0) & ~torch.eye(N, dtype=torch.bool, device=dev)
+        edge_index = mask.nonzero(as_tuple=False).t()     # (2,E)
+
+    return Data(x=x, edge_index=edge_index, lin_idx=lin_idx)
 
 
 
@@ -82,6 +126,10 @@ def graph_to_line_graph_fast(data: Data) -> Data:
     quante estremità due archi condividono. Lij>0 ⇒ archi adiacenti.
 
     Complessità:  O(E + |L|)  (tutto in C++/CUDA sparse)."""
+    if data.edge_index.numel() == 0:
+        empty_attr = torch.empty((0, data.x.size(1)), device=data.x.device)
+        return Data(x=data.x, edge_index=data.edge_index, edge_attr=empty_attr, lin_idx=getattr(data, 'lin_idx', None))
+
     device = data.x.device
     src, dst = data.edge_index            # (2, E)
     E = src.size(0)
@@ -125,7 +173,13 @@ def graph_to_line_graph_fast(data: Data) -> Data:
         a2, b2 = src[e2], dst[e2]
         edge_attr = (data.x[a1] + data.x[b1] + data.x[a2] + data.x[b2]) * 0.25
 
-    return Data(x=x_line, edge_index=edge_index_L, edge_attr=edge_attr)
+    line_data = Data(x=x_line, edge_index=edge_index_L, edge_attr=edge_attr)
+    if hasattr(data, 'lin_idx'):
+        line_data.lin_idx = data.lin_idx
+    else:
+        print('non lo ha')
+    return line_data
+
 
 
 
@@ -318,6 +372,45 @@ def graph_to_line_graph(data):
     return line_graph
 '''
 
+# ===============================================================
+#  tensor  ➜  PyG Data  (single‐relation complete graph, O(N^2) torch ops)
+# ===============================================================
+def tensor_to_graph_fast_v2(t: torch.Tensor,
+                            moves_left: float,
+                            S: int = 4) -> Data:
+    """
+    t : (T,S,S,S) or (S,S,S) with values in {-1,0,1}
+    Returns a PyG Data with:
+      x          (N,5)    features [i/S, j/S, k/S, val0/2, moves_left/S]
+      edge_index (2,E)    a single‐relation complete graph (directed edges)
+      lin_idx    (N,)     mapping linear index 3D->0..S^3-1
+    """
+    dev = t.device
+    if t.dim() == 3:
+        t = t.unsqueeze(0)                   # make (T,S,S,S)
+    # find active nodes (any nonzero across time)
+    active = (t != 0).any(0)                 # (S,S,S) bool
+    if not active.any():
+        i = j = k = torch.tensor([0], device=dev)
+    else:
+        i, j, k = active.nonzero(as_tuple=True)
+    N = i.numel()
+    lin_idx = (i * S + j) * S + k            # linear index in [0..S^3-1]
+
+    # build node features
+    coord = torch.stack((i, j, k), dim=1).float() / (S - 1)    # (N,3)
+    val0  = t[0, i, j, k].float().unsqueeze(1) / 2.0           # (N,1)
+    mv    = torch.full((N,1), moves_left / S, device=dev)      # (N,1)
+    x     = torch.cat((coord, val0, mv), dim=1)                # (N,5)
+
+    # build complete directed graph edges (u->v for all u!=v)
+    idx = torch.arange(N, device=dev)
+    u = idx.repeat(N)                       # (N*N,)
+    v = idx.repeat_interleave(N)            # (N*N,)
+    mask = u != v
+    edge_index = torch.stack((u[mask], v[mask]), dim=0)  # (2, N*(N-1))
+
+    return Data(x=x, edge_index=edge_index, lin_idx=lin_idx)
 
 def visualize_graph_2d(graph_data):
     """Visualizza un grafo con le feature dei nodi e i pesi degli archi stampati accanto agli archi."""

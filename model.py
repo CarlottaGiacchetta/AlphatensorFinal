@@ -5,18 +5,16 @@ from torch import nn
 from torch.nn import functional as F
 from torch.distributions.categorical import Categorical
 
-
-#  hybrid_torso.py
 import torch, torch.nn.functional as F
 from torch import nn
 from torch_geometric.data import Data, Batch
 from torch_geometric.nn  import SAGEConv 
 
-from class_gnn import TorsoGCNv1, TorsoGCNv2, TorsoGCNv3, TorsoGATv1, TorsoGCNBetter
+from class_gnn import TorsoGCNv1, TorsoGCNv2, TorsoGCNv3, TorsoGATv1, HybridGnnTorsoLine
 from utils_graph import tensor_to_graph_fast
 
 # ---------------------------------------------------------------------
-def tensor_to_graph_fast_maky(tensor: torch.Tensor, moves_left: float):
+def tensor_to_graph_fast(tensor: torch.Tensor, moves_left: float):
     """
     tensor      : (S,S,S) valori in {-1,0,1}
     moves_left  : scalare (float)
@@ -86,9 +84,7 @@ class DynamicGNN(nn.Module):
         )
         self.ln = nn.LayerNorm(out_dim)
 
-    def forward(self, batch: Data):
-        if not hasattr(batch, "edge_type"):
-            batch.edge_type = torch.zeros(batch.edge_index.size(1), dtype=torch.long, device=batch.edge_index.device)
+    def forward(self, batch):
         x = self.feat2c(batch.x)
         for conv in self.convs:
             x = self.ln(F.relu(conv(x, batch.edge_index, batch.edge_type)))
@@ -162,6 +158,151 @@ class HybridGnnTorso(nn.Module):
                         act_emb.unsqueeze(1),
                         mv_emb.unsqueeze(1)], dim=1)        # (B,50,C)
         return ee
+
+
+from torch_geometric.data import Data, Batch
+from torch_geometric.nn   import SAGEConv
+import torch, torch.nn.functional as F
+from torch import nn, Tensor
+
+# ===============================================================
+#  tensor  ➜  PyG Data  (single‐relation complete graph, O(N^2) torch ops)
+# ===============================================================
+def tensor_to_graph_fast_v2(t: Tensor,
+                            moves_left: float,
+                            S: int = 4) -> Data:
+    """
+    t : (T,S,S,S) or (S,S,S) with values in {-1,0,1}
+    Returns a PyG Data with:
+      x          (N,5)    features [i/S, j/S, k/S, val0/2, moves_left/S]
+      edge_index (2,E)    a single‐relation complete graph (directed edges)
+      lin_idx    (N,)     mapping linear index 3D->0..S^3-1
+    """
+    dev = t.device
+    if t.dim() == 3:
+        t = t.unsqueeze(0)                   # make (T,S,S,S)
+    # find active nodes (any nonzero across time)
+    active = (t != 0).any(0)                 # (S,S,S) bool
+    if not active.any():
+        i = j = k = torch.tensor([0], device=dev)
+    else:
+        i, j, k = active.nonzero(as_tuple=True)
+    N = i.numel()
+    lin_idx = (i * S + j) * S + k            # linear index in [0..S^3-1]
+
+    # build node features
+    coord = torch.stack((i, j, k), dim=1).float() / (S - 1)    # (N,3)
+    val0  = t[0, i, j, k].float().unsqueeze(1) / 2.0           # (N,1)
+    mv    = torch.full((N,1), moves_left / S, device=dev)      # (N,1)
+    x     = torch.cat((coord, val0, mv), dim=1)                # (N,5)
+
+    # build complete directed graph edges (u->v for all u!=v)
+    idx = torch.arange(N, device=dev)
+    u = idx.repeat(N)                       # (N*N,)
+    v = idx.repeat_interleave(N)            # (N*N,)
+    mask = u != v
+    edge_index = torch.stack((u[mask], v[mask]), dim=0)  # (2, N*(N-1))
+
+    return Data(x=x, edge_index=edge_index, lin_idx=lin_idx)
+
+# ===============================================================
+#  DynamicGNNv2   (GraphSAGE, single edge_index)
+# ===============================================================
+class DynamicGNNv2(nn.Module):
+    def __init__(self, in_dim=5, out_dim=32, num_layers=3):
+        super().__init__()
+        self.lin_in = nn.Linear(in_dim, out_dim)
+        self.convs  = nn.ModuleList(
+            SAGEConv(out_dim, out_dim, aggr='mean')
+            for _ in range(num_layers)
+        )
+        self.norm   = nn.LayerNorm(out_dim)
+
+    def forward(self, batch: Batch):
+        x  = self.lin_in(batch.x)
+        ei = batch.edge_index
+        for conv in self.convs:
+            x = self.norm(F.relu(conv(x, ei)))
+        batch.x = x
+        return batch
+
+# ===============================================================
+#  HybridGnnTorsoV2  (GNN + transformer on past actions + scalar)
+# ===============================================================
+class HybridGnnTorsoV2(nn.Module):
+    """
+      • GNN (GraphSAGE) on current frame → 48 embeddings
+      • Transformer on past actions (T-1 frames) → 1 embedding
+      • Linear on moves_left scalar → 1 embedding
+      ⇒ Concatenate → (B, 50, C)
+    """
+    def __init__(self, S=4, T=8, dim_c=32,gnn_layers=1, n_tf_layers=2, n_heads=4):
+        super().__init__()
+        self.S, self.T, self.C = S, T, dim_c
+
+        # dynamic GNN
+        self.gnn = DynamicGNNv2(in_dim=5, out_dim=dim_c,
+                                num_layers=gnn_layers)
+
+        # transformer for past actions
+        tf_layer = nn.TransformerEncoderLayer(
+            d_model=dim_c, nhead=n_heads, dim_feedforward=4*dim_c,
+            batch_first=True, norm_first=True
+        )
+        self.act_tf  = nn.TransformerEncoder(tf_layer, n_tf_layers)
+        self.act_lin = nn.Linear(S**3, dim_c)   # flatten 64 → C
+
+        # scalar moves_left embedding
+        self.scalar = nn.Linear(1, dim_c)
+
+        # pooling matrix for 48 share‐i/j/k embeddings
+        grid = torch.arange(S**3)
+        i = grid // (S*S)
+        j = (grid // S) % S
+        k = grid % S
+        mask = torch.cat([
+            (i[:,None] == torch.arange(S)).float().T,  # share‐i  → (S, S^3)
+            (j[:,None] == torch.arange(S)).float().T,  # share‐j
+            (k[:,None] == torch.arange(S)).float().T   # share‐k
+        ], dim=0)  # (3S, S^3) = (48,64)
+        self.register_buffer("poolW", mask)
+
+    def forward(self, xx: Tensor, ss: Tensor):
+        """
+        xx : (B, T, S, S, S)   current + past frames
+        ss : (B, 1)           moves_left scalar
+        """
+        B, dev = xx.size(0), xx.device
+
+        # --- GNN on current frame -------------------------------
+        graphs = [
+            tensor_to_graph_fast_v2(xx[b,0], ss[b].item(), self.S)
+            for b in range(B)
+        ]
+        batch = Batch.from_data_list(graphs).to(dev)
+        out   = self.gnn(batch)                  # batch.x shape: (sum N_b, C)
+
+        # dense unpool + pooling to 48 dims
+        full = torch.zeros(B, self.S**3, self.C, device=dev)
+        full[batch.batch, batch.lin_idx] = out.x
+        # (48 × 64) · (B × 64 × C) → (B × 48 × C)
+        gnn_emb = torch.matmul(self.poolW, full) / self.poolW.sum(1, keepdim=True)
+
+        # --- transformer on past actions -------------------------
+        acts = xx[:,1:].reshape(B, self.T-1, -1).float()   # (B, T-1, 64)
+        acts = self.act_lin(acts)                         # (B, T-1, C)
+        act_emb = self.act_tf(acts).mean(1)               # (B, C)
+
+        # --- scalar embedding ------------------------------------
+        mv_emb = torch.relu(self.scalar(ss)).squeeze(1)   # (B, C)
+
+        # --- concatenate → (B, 50, C) ----------------------------
+        return torch.cat([
+            gnn_emb,
+            act_emb.unsqueeze(1),
+            mv_emb.unsqueeze(1)
+        ], dim=1)
+
 
 
 
@@ -322,8 +463,8 @@ class PredictActionLogits(nn.Module):
         n_steps: int,
         n_logits: int,
         dim_c: int,
-        n_feats=32,#,64,
-        n_heads= 16,#32,
+        n_feats=64,
+        n_heads= 32,
         n_layers=2,
         device="cpu",
         **kwargs
@@ -424,7 +565,7 @@ class PolicyHead(nn.Module):
 
 class ValueHead(nn.Module):
     # 64, 32, 512
-    def __init__(self, n_feats=32, n_heads=16, n_hidden=256, n_quantile=8, **kwargs):
+    def __init__(self, n_feats=64, n_heads=32, n_hidden=512, n_quantile=8, **kwargs):
         super().__init__()
         self.mlp = nn.Sequential(
             nn.Linear(n_feats * n_heads, n_hidden),
@@ -583,11 +724,12 @@ class TensorModel(nn.Module):
         self.n_samples = n_samples
         #self.torso = Torso(dim_3d, dim_t, dim_s, dim_c, **kwargs)
         #self.torso = GNNTorso(dim_3d, dim_t, dim_s, dim_c, **kwargs)
-        self.torso = HybridGnnTorso(S=4, T=8, dim_c=dim_c)
+        #self.torso = HybridGnnTorso(S=4, T=8, dim_c=dim_c)
         #self.torso = TorsoGCNv1(dim_t+3, dim_t, dim_s, dim_c, **kwargs)
         #self.torso = TorsoGCNv2(dim_t+3, dim_t, dim_s, dim_c, **kwargs)
         #self.torso = TorsoGCNv3(dim_t+3, dim_t, dim_s, dim_c, **kwargs)
         #self.torso = TorsoGATv1(dim_t+3, dim_t, dim_s, dim_c, **kwargs)
+        self.torso = HybridGnnTorsoLine(S=4, T=8, dim_c=dim_c)
         
         self.policy_head = PolicyHead(
             n_steps, n_logits, n_samples, dim_c, device=device, **kwargs
