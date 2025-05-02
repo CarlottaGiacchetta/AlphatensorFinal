@@ -5,13 +5,15 @@ from torch import nn
 from torch.nn import functional as F
 from torch.distributions.categorical import Categorical
 
+
+#  hybrid_torso.py
 import torch, torch.nn.functional as F
 from torch import nn
 from torch_geometric.data import Data, Batch
 from torch_geometric.nn  import SAGEConv 
 
-from class_gnn import TorsoGCNv1, TorsoGCNv2, TorsoGCNv3, TorsoGATv1, HybridGnnTorsoLine, HybridGnnTorsoATT
-from utils_graph import tensor_to_graph_fast
+from class_gnn import TorsoGCNv1, TorsoGCNv2, TorsoGCNv3, TorsoGATv1, HybridGnnTorsoATT, HybridGnnTorsoLine
+
 
 # ---------------------------------------------------------------------
 def tensor_to_graph_fast(tensor: torch.Tensor, moves_left: float):
@@ -463,8 +465,8 @@ class PredictActionLogits(nn.Module):
         n_steps: int,
         n_logits: int,
         dim_c: int,
-        n_feats=64,
-        n_heads= 32,
+        n_feats=32,
+        n_heads= 16,
         n_layers=2,
         device="cpu",
         **kwargs
@@ -565,7 +567,7 @@ class PolicyHead(nn.Module):
 
 class ValueHead(nn.Module):
     # 64, 32, 512
-    def __init__(self, n_feats=64, n_heads=32, n_hidden=512, n_quantile=8, **kwargs):
+    def __init__(self, n_feats=32, n_heads=16, n_hidden=256, n_quantile=8, **kwargs):
         super().__init__()
         self.mlp = nn.Sequential(
             nn.Linear(n_feats * n_heads, n_hidden),
@@ -725,13 +727,13 @@ class TensorModel(nn.Module):
         #self.torso = Torso(dim_3d, dim_t, dim_s, dim_c, **kwargs)
         #self.torso = GNNTorso(dim_3d, dim_t, dim_s, dim_c, **kwargs)
         #self.torso = HybridGnnTorso(S=4, T=8, dim_c=dim_c)
-        #self.torso = TorsoGCNv1(dim_t+3, dim_t, dim_s, dim_c, **kwargs)
-        #self.torso = TorsoGCNv2(dim_t+3, dim_t, dim_s, dim_c, **kwargs)
-        #self.torso = TorsoGCNv3(dim_t+3, dim_t, dim_s, dim_c, **kwargs)
-        #self.torso = TorsoGATv1(dim_t+3, dim_t, dim_s, dim_c, **kwargs)
+        self.torso = HybridGnnTorsoV2(S=4, T=8, dim_c=dim_c)
+        #self.torso = TorsoGCNv1(S=4, T=8, dim_c=dim_c)
+        #self.torso = TorsoGCNv2(S=4, T=8, dim_c=dim_c)
+        #self.torso = TorsoGCNv3(S=4, T=8, dim_c=dim_c)
+        #self.torso = TorsoGATv1(S=4, T=8, dim_c=dim_c)
+        #self.torso = HybridGnnTorsoATT(S=4, T=8, dim_c=dim_c)
         #self.torso = HybridGnnTorsoLine(S=4, T=8, dim_c=dim_c)
-        self.torso = HybridGnnTorsoATT(S=4, T=8, dim_c=dim_c)
-        
         self.policy_head = PolicyHead(
             n_steps, n_logits, n_samples, dim_c, device=device, **kwargs
         )
