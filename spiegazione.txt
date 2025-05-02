@@ -1,0 +1,5 @@
+run_job.sh runna quella di maky (Hybrid torsov2) e salva in outputs/output_maky_4650
+run_job1.sh runna quella base di caloty (GCNV2 -con pesi) e salva in outputs/output_caloty_4651
+run_job2.sh runna quella hybrid di caloty e salva in outputs/output_GAT_4652
+run_job3.sh runna quella base di caloty GAT (HybridLine) e salva in outputs/output_HybridLine_4654
+run_job4.sh runna quella hybrid GAT di caloty e salva in outputs/output_HybridGAT_4655
