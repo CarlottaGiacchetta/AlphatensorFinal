@@ -71,7 +71,7 @@ class AlphaZero:
             # ──────────────────────────────────────────────────────
             # Forward & Loss (mixed precision)
             # ──────────────────────────────────────────────────────
-            with amp.autocast(enabled=self.use_amp):
+            with amp.autocast(enabled=self.use_amp, device = self.model.device):
                 pol_loss, val_loss = self.model.fwd_train(xx, ss, gg, vv)
                 loss = pol_loss + val_loss
 
