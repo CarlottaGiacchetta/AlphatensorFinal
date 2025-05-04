@@ -465,8 +465,8 @@ class PredictActionLogits(nn.Module):
         n_steps: int,
         n_logits: int,
         dim_c: int,
-        n_feats=32,
-        n_heads= 16,
+        n_feats=64,
+        n_heads= 32,
         n_layers=2,
         device="cpu",
         **kwargs
@@ -567,7 +567,7 @@ class PolicyHead(nn.Module):
 
 class ValueHead(nn.Module):
     # 64, 32, 512
-    def __init__(self, n_feats=32, n_heads=16, n_hidden=256, n_quantile=8, **kwargs):
+    def __init__(self, n_feats=64, n_heads=32, n_hidden=512, n_quantile=8, **kwargs):
         super().__init__()
         self.mlp = nn.Sequential(
             nn.Linear(n_feats * n_heads, n_hidden),
