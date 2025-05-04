@@ -1,7 +1,7 @@
 #!/bin/bash
 
 #SBATCH -p long                 # Nome della coda (edu-20h)
-#SBATCH --gres=gpu:1              # Richiedi 1 GPU generica   gpu:a30.24:1
+#SBATCH --gres=gpu:a100.80:1
 #SBATCH --ntasks=1                 # Numero di task
 #SBATCH --cpus-per-task=4          # Numero di CPU per task
 #SBATCH --mem-per-cpu=7168M        # Memoria per CPU (7 GB per CPU)
