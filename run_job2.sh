@@ -7,7 +7,7 @@
 #SBATCH --mem-per-cpu=7168M        # Memoria per CPU (7 GB per CPU)
 #SBATCH -N 1                       # Richiedi 1 nodo
 #SBATCH -t 24:00:00                # Tempo massimo di esecuzione (20 ore)
-#SBATCH --output=outputs/HybridGAT_%j.txt     # File di output (il %j inserisce il job ID)
+#SBATCH --output=outputs/HybridGAT_GRANDE%j.txt     # File di output (il %j inserisce il job ID)
 
 
 # Caricare CUDA (se necessario per l'uso con PyTorch o TensorFlow)
